@@ -5,8 +5,7 @@ import * as path from 'path';
 import * as os from 'os';
 
 // Use window.require to access electron in the renderer process
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type NodeRequire = (module: string) => any;
+type NodeRequire = (module: string) => unknown;
 declare global {
 	interface Window {
 		require: NodeRequire;
@@ -56,9 +55,9 @@ export default class LocalReferer extends Plugin {
 			const newFilePath = await this.app.fileManager.getAvailablePathForAttachment(fileName);
 
 			// Write to vault
-			// Convert Buffer to ArrayBuffer (fs.readFile returns Buffer, createBinary expects ArrayBuffer)
-			// Using buffer.buffer is safe for fresh buffers from readFile, casting to any/ArrayBuffer suppresses TS mismatch
-			await this.app.vault.createBinary(newFilePath, buffer as unknown as ArrayBuffer);
+			// Convert Buffer to ArrayBuffer for createBinary
+			const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) as ArrayBuffer;
+			await this.app.vault.createBinary(newFilePath, arrayBuffer);
 
 			// Insert link using Obsidian's standard link generation
 			// This respects user settings for relative/absolute links and attachment folders
@@ -101,8 +100,21 @@ export default class LocalReferer extends Plugin {
 		try {
 			// Electron dialog approach (Preferred for desktop)
 			// Accessing electron via window.require which works in Obsidian's renderer
-			const electron = window.require('electron');
-			const dialog = electron.remote?.dialog || electron.dialog; // remote is deprecated/moved in newer electron
+			const electron = window.require('electron') as {
+				remote?: {
+					dialog: {
+						showOpenDialog: (window: unknown, options: unknown) => Promise<{ canceled: boolean; filePaths: string[] }>;
+					};
+					getCurrentWindow: () => unknown;
+				};
+				dialog?: {
+					showOpenDialog: (window: unknown, options: unknown) => Promise<{ canceled: boolean; filePaths: string[] }>;
+				};
+				BrowserWindow?: {
+					getFocusedWindow: () => unknown;
+				};
+			};
+			const dialog = electron.remote?.dialog || electron.dialog;
 			
 			// Note: In very recent Electron versions used by Obsidian, 'remote' might be unavailable directly.
 			// However, for many plugin environments this is still the standard way to access system dialogs.
@@ -116,7 +128,7 @@ export default class LocalReferer extends Plugin {
 				};
 				
 				// Need a browser window instance for modal dialog
-				const currentWindow = electron.remote?.getCurrentWindow() || electron.BrowserWindow.getFocusedWindow();
+				const currentWindow = electron.remote?.getCurrentWindow() || electron.BrowserWindow?.getFocusedWindow();
 				
 				const result = await dialog.showOpenDialog(currentWindow, options);
 				

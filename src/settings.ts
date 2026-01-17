@@ -23,7 +23,7 @@ export class LocalRefererSettingTab extends PluginSettingTab {
 		containerEl.empty();
 
 		new Setting(containerEl)
-			.setName('Default Path')
+			.setName('Default path')
 			.setDesc('The default directory to open when selecting a file. If empty, defaults to your home directory.')
 			.addText(text => text
 				.setPlaceholder('/path/to/files')
