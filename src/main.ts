@@ -1,13 +1,15 @@
-import { App, Editor, MarkdownView, Menu, Notice, Plugin, TFile } from 'obsidian';
+import { Editor, MarkdownView, Menu, Notice, Plugin, TFile } from 'obsidian';
 import { LocalRefererSettings, DEFAULT_SETTINGS, LocalRefererSettingTab } from "./settings";
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 
 // Use window.require to access electron in the renderer process
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type NodeRequire = (module: string) => any;
 declare global {
 	interface Window {
-		require: any;
+		require: NodeRequire;
 	}
 }
 
@@ -23,7 +25,7 @@ export default class LocalReferer extends Plugin {
 			this.app.workspace.on('editor-menu', (menu: Menu, editor: Editor, view: MarkdownView) => {
 				menu.addItem((item) => {
 					item
-						.setTitle('From Local')
+						.setTitle('From local')
 						.setIcon('paperclip')
 						.onClick(async () => {
 							await this.insertLocalFile(editor, view);
@@ -132,14 +134,16 @@ export default class LocalReferer extends Plugin {
 			return new Promise((resolve) => {
 				const input = document.createElement('input');
 				input.type = 'file';
-				input.style.display = 'none';
+				input.addClass('local-referer-hidden-input');
 				document.body.appendChild(input);
 
 				input.onchange = () => {
 					if (input.files && input.files.length > 0) {
 						// The 'path' property is available on File objects in Electron/Obsidian
-						// @ts-ignore
-						const paths = Array.from(input.files).map((f: any) => f.path);
+						interface ElectronFile extends File {
+							path: string;
+						}
+						const paths = Array.from(input.files).map((f) => (f as ElectronFile).path);
 						resolve(paths);
 					} else {
 						resolve(undefined);
