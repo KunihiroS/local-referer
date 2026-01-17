@@ -16,7 +16,7 @@ This plugin enhances the editing experience in Obsidian by allowing users to eas
     *   The selected file is **copied** into the Obsidian Vault.
     *   **Destination Folder**: Respects the user's Obsidian setting for "Default location for new attachments".
     *   **Name Collision**: Handles duplicate filenames by auto-renaming (e.g. `image.png` -> `image 1.png`).
-    *   An internal link (WikiLink format: `[[filename.ext]]`) is inserted at the cursor position.
+    *   Inserts an internal link at the cursor position (respects Obsidian's "Use Wikilinks" setting).
 
 ## Development Setup
 

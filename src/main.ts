@@ -1,80 +1,150 @@
-import {App, Editor, MarkdownView, Modal, Notice, Plugin} from 'obsidian';
-import {DEFAULT_SETTINGS, MyPluginSettings, SampleSettingTab} from "./settings";
+import { App, Editor, MarkdownView, Menu, Notice, Plugin, TFile } from 'obsidian';
+import { LocalRefererSettings, DEFAULT_SETTINGS, LocalRefererSettingTab } from "./settings";
+import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
 
-// Remember to rename these classes and interfaces!
+// Use window.require to access electron in the renderer process
+declare global {
+	interface Window {
+		require: any;
+	}
+}
 
-export default class MyPlugin extends Plugin {
-	settings: MyPluginSettings;
+export default class LocalReferer extends Plugin {
+	settings: LocalRefererSettings;
 
 	async onload() {
 		await this.loadSettings();
 
-		// This creates an icon in the left ribbon.
-		this.addRibbonIcon('dice', 'Sample', (evt: MouseEvent) => {
-			// Called when the user clicks the icon.
-			new Notice('This is a notice!');
-		});
+		this.addSettingTab(new LocalRefererSettingTab(this.app, this));
 
-		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status bar text');
+		this.registerEvent(
+			this.app.workspace.on('editor-menu', (menu: Menu, editor: Editor, view: MarkdownView) => {
+				menu.addItem((item) => {
+					item
+						.setTitle('From Local')
+						.setIcon('paperclip')
+						.onClick(async () => {
+							await this.insertLocalFile(editor, view);
+						});
+				});
+			})
+		);
+	}
 
-		// This adds a simple command that can be triggered anywhere
-		this.addCommand({
-			id: 'open-modal-simple',
-			name: 'Open modal (simple)',
-			callback: () => {
-				new SampleModal(this.app).open();
+	async insertLocalFile(editor: Editor, view: MarkdownView) {
+		const filePaths = await this.pickFile();
+		if (!filePaths || filePaths.length === 0) return;
+
+		const filePath = filePaths[0];
+		if (!filePath) return;
+
+		try {
+			const fileName = path.basename(filePath);
+			// Validate file existence
+			if (!fs.existsSync(filePath)) {
+				throw new Error(`File not found: ${filePath}`);
 			}
-		});
-		// This adds an editor command that can perform some operation on the current editor instance
-		this.addCommand({
-			id: 'replace-selected',
-			name: 'Replace selected content',
-			editorCallback: (editor: Editor, view: MarkdownView) => {
-				editor.replaceSelection('Sample editor command');
+
+			// Read file asynchronously
+			const buffer = await fs.promises.readFile(filePath);
+
+			// Determine destination path
+			const newFilePath = await this.app.fileManager.getAvailablePathForAttachment(fileName);
+
+			// Write to vault
+			// Convert Buffer to ArrayBuffer (fs.readFile returns Buffer, createBinary expects ArrayBuffer)
+			// Using buffer.buffer is safe for fresh buffers from readFile, casting to any/ArrayBuffer suppresses TS mismatch
+			await this.app.vault.createBinary(newFilePath, buffer as unknown as ArrayBuffer);
+
+			// Insert link using Obsidian's standard link generation
+			// This respects user settings for relative/absolute links and attachment folders
+			const file = this.app.vault.getAbstractFileByPath(newFilePath);
+			if (file instanceof TFile) {
+				const sourcePath = view.file?.path || '';
+				const linkText = this.app.fileManager.generateMarkdownLink(file, sourcePath);
+				editor.replaceSelection(linkText);
+				new Notice(`Inserted: ${fileName}`);
 			}
-		});
-		// This adds a complex command that can check whether the current state of the app allows execution of the command
-		this.addCommand({
-			id: 'open-modal-complex',
-			name: 'Open modal (complex)',
-			checkCallback: (checking: boolean) => {
-				// Conditions to check
-				const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (markdownView) {
-					// If checking is true, we're simply "checking" if the command can be run.
-					// If checking is false, then we want to actually perform the operation.
-					if (!checking) {
-						new SampleModal(this.app).open();
+
+		} catch (error) {
+			console.error(error);
+			let message = 'Unknown error';
+			if (error instanceof Error) message = error.message;
+			else if (typeof error === 'string') message = error;
+			
+			new Notice(`Error inserting file: ${message}`);
+		}
+	}
+
+	async pickFile(): Promise<string[] | undefined> {
+		try {
+			// Electron dialog approach (Preferred for desktop)
+			// Accessing electron via window.require which works in Obsidian's renderer
+			const electron = window.require('electron');
+			const dialog = electron.remote?.dialog || electron.dialog; // remote is deprecated/moved in newer electron
+			
+			// Note: In very recent Electron versions used by Obsidian, 'remote' might be unavailable directly.
+			// However, for many plugin environments this is still the standard way to access system dialogs.
+			// If remote is missing, we might need a workaround or check if strict sandbox is enabled.
+			
+			if (dialog) {
+				const options = {
+					title: 'Select a file to insert',
+					defaultPath: this.settings.defaultPath || os.homedir(),
+					properties: ['openFile']
+				};
+				
+				// Need a browser window instance for modal dialog
+				const currentWindow = electron.remote?.getCurrentWindow() || electron.BrowserWindow.getFocusedWindow();
+				
+				const result = await dialog.showOpenDialog(currentWindow, options);
+				
+				if (result.canceled) return undefined;
+				return result.filePaths;
+			} else {
+				throw new Error("Electron dialog not available");
+			}
+
+		} catch (e) {
+			console.warn("Electron dialog failed, falling back to HTML input", e);
+
+			// Fallback approach: HTML Input element
+			// Note: This cannot respect 'defaultPath' due to browser security restrictions.
+			return new Promise((resolve) => {
+				const input = document.createElement('input');
+				input.type = 'file';
+				input.style.display = 'none';
+				document.body.appendChild(input);
+
+				input.onchange = () => {
+					if (input.files && input.files.length > 0) {
+						// The 'path' property is available on File objects in Electron/Obsidian
+						// @ts-ignore
+						const paths = Array.from(input.files).map((f: any) => f.path);
+						resolve(paths);
+					} else {
+						resolve(undefined);
 					}
+					document.body.removeChild(input);
+				};
 
-					// This command will only show up in Command Palette when the check function returns true
-					return true;
+				input.oncancel = () => { // fires on ESC or cancel
+					resolve(undefined);
+					document.body.removeChild(input);
 				}
-				return false;
-			}
-		});
 
-		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new SampleSettingTab(this.app, this));
-
-		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-		// Using this function will automatically remove the event listener when this plugin is disabled.
-		this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
-			new Notice("Click");
-		});
-
-		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-		this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
-
+				input.click();
+			});
+		}
 	}
 
 	onunload() {
 	}
 
 	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData() as Partial<MyPluginSettings>);
+		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData() as Partial<LocalRefererSettings>);
 	}
 
 	async saveSettings() {
@@ -82,18 +152,3 @@ export default class MyPlugin extends Plugin {
 	}
 }
 
-class SampleModal extends Modal {
-	constructor(app: App) {
-		super(app);
-	}
-
-	onOpen() {
-		let {contentEl} = this;
-		contentEl.setText('Woah!');
-	}
-
-	onClose() {
-		const {contentEl} = this;
-		contentEl.empty();
-	}
-}
