@@ -63,7 +63,24 @@ export default class LocalReferer extends Plugin {
 			const file = this.app.vault.getAbstractFileByPath(newFilePath);
 			if (file instanceof TFile) {
 				const sourcePath = view.file?.path || '';
-				const linkText = this.app.fileManager.generateMarkdownLink(file, sourcePath);
+				let linkText = this.app.fileManager.generateMarkdownLink(file, sourcePath);
+
+				// Check if the file should be embedded (images, audio, video, pdf)
+				const EMBED_EXTENSIONS = [
+					// Images
+					'png', 'jpg', 'jpeg', 'gif', 'bmp', 'svg', 'webp',
+					// Audio
+					'mp3', 'webm', 'wav', 'm4a', 'ogg', '3gp', 'flac',
+					// Video
+					'mp4', 'webm', 'ogv', 'mov', 'mkv',
+					// PDF
+					'pdf'
+				];
+				
+				if (EMBED_EXTENSIONS.includes(file.extension.toLowerCase()) && !linkText.startsWith('!')) {
+					linkText = '!' + linkText;
+				}
+
 				editor.replaceSelection(linkText);
 				new Notice(`Inserted: ${fileName}`);
 			}
